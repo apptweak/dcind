@@ -3,8 +3,8 @@
 
 LOG_FILE=${LOG_FILE:-/tmp/docker.log}
 SKIP_PRIVILEGED=${SKIP_PRIVILEGED:-false}
-STARTUP_TIMEOUT=${STARTUP_TIMEOUT:-20}
 DOCKER_DATA_ROOT=${DOCKER_DATA_ROOT:-/scratch/docker}
+STARTUP_TIMEOUT=${STARTUP_TIMEOUT:-300}
 
 sanitize_cgroups() {
   mkdir -p /sys/fs/cgroup
@@ -52,10 +52,10 @@ sanitize_cgroups() {
 }
 
 start_docker() {
-  echo "Starting Docker..."
+  message header "Setting up docker";message info "Starting Docker..."
 
   if [ -f /tmp/docker.pid ]; then
-    echo "Docker is already running"
+    message info "Docker is already running"
     return
   fi
 
@@ -83,16 +83,16 @@ start_docker() {
     server_args="${server_args} --registry-mirror $2"
   fi
 
-  export server_args LOG_FILE DOCKER_DATA_ROOT
+  export server_args LOG_FILE
   trap stop_docker EXIT
 
   try_start() {
-    dockerd --data-root $DOCKER_DATA_ROOT ${server_args} >$LOG_FILE 2>&1 &
+    dockerd --data-root /scratch/docker ${server_args} >$LOG_FILE 2>&1 &
     echo $! > /tmp/docker.pid
 
     sleep 1
 
-    echo waiting for docker to come up...
+    message info "Waiting for docker to come up ..."
     until docker info >/dev/null 2>&1; do
       sleep 1
       if ! kill -0 "$(cat /tmp/docker.pid)" 2>/dev/null; then
@@ -112,6 +112,8 @@ start_docker() {
   else
     try_start
   fi
+
+  message info "Starting Docker: OK"
 }
 
 stop_docker() {
@@ -128,4 +130,46 @@ stop_docker() {
 
   kill -TERM $pid
   rm /tmp/docker.pid
+}
+
+
+# Helper functions for the differnt tasks
+# ---------------------------------------
+
+# The image_names array needs to be defined beforehand
+# Example:
+# load_images db-image api-image
+load_images() {
+  # The docker images need to be preloaded to enable caching
+  # and to let concourse access the private registry
+  message info "Load the docker images from the inputs"
+
+  local image_names=("$@") # get all argumets to load_images into an array
+
+  # Load each image from the corresponding folder and tag it correctly
+  # The structure of the folder is explained here: https://github.com/concourse/registry-image-resource#in-fetch-the-images-rootfs-and-metadata
+  # Note that this script works with the new registry-image resource, not docker-image
+  for image_name in "${image_names[@]}"; do
+      docker load --quiet --input "${image_name}/image.tar" &
+  done
+
+  wait
+
+  message info "This is just to visually check in the log that images have been loaded successfully"
+  docker images
+}
+
+
+
+# Use the wait-for-it script to wait for services to come up
+# See: https://github.com/vishnubob/wait-for-it
+# Usage: wait_for_startup localhost:5432 localhost:80
+wait_for_startup() {
+  message info "Wait for services to start"
+
+  local services=("$@")
+
+  for service in "${services[@]}"; do
+      wait-for-it "${service}" --timeout=600 --strict
+  done
 }
