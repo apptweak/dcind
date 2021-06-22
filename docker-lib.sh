@@ -170,6 +170,6 @@ wait_for_startup() {
   local services=("$@")
 
   for service in "${services[@]}"; do
-      wait-for-it "${service}" --timeout=600 --strict
+      wait-for-it "${service}" --timeout=180 --strict
   done
 }
